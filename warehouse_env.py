@@ -63,6 +63,7 @@ class WarehouseEnv(gym.Env):
         self.pickup_pos = np.array([0, 0])
         self.dropoff_pos = np.array([0, 0])
         self.carrying = 0
+        self.robot_dir = 0  # Dirección en grados para la boca de Pac-Man (0: Derecha, 90: Arriba, 180: Izquierda, 270: Abajo)
         self._elapsed_steps = 0
         
         # Elementos de renderizado Pygame
@@ -70,6 +71,9 @@ class WarehouseEnv(gym.Env):
         self.cell_size = self.window_size // self.grid_size
         self.window = None
         self.clock = None
+        self.pacman_sprite = None
+        self.ghost_sprite = None
+        self.cherry_sprite = None
         
     def _get_obs(self):
         """Devuelve la observación actual estructurada de acuerdo al espacio."""
@@ -121,8 +125,9 @@ class WarehouseEnv(gym.Env):
         idx_dropoff = np_random.choice(len(remaining_positions))
         self.dropoff_pos = np.array(remaining_positions[idx_dropoff], dtype=np.int32)
         
-        # El robot inicia sin paquete
+        # El robot inicia sin paquete y apuntando a la derecha
         self.carrying = 0
+        self.robot_dir = 0
         
         # Retornar observación e info
         observation = self._get_obs()
@@ -148,12 +153,16 @@ class WarehouseEnv(gym.Env):
         # 1. Procesar Movimiento / Acción del Robot
         if action == 0:    # Arriba
             self.robot_pos[1] = max(0, self.robot_pos[1] - 1)
+            self.robot_dir = 90
         elif action == 1:  # Abajo
             self.robot_pos[1] = min(self.grid_size - 1, self.robot_pos[1] + 1)
+            self.robot_dir = 270
         elif action == 2:  # Izquierda
             self.robot_pos[0] = max(0, self.robot_pos[0] - 1)
+            self.robot_dir = 180
         elif action == 3:  # Derecha
             self.robot_pos[0] = min(self.grid_size - 1, self.robot_pos[0] + 1)
+            self.robot_dir = 0
             
         elif action == 4:  # Recoger Paquete (Pick up)
             # Debe estar sobre la zona de recogida y no estar cargando
@@ -250,6 +259,7 @@ class WarehouseEnv(gym.Env):
             pygame.display.set_caption("Warehouse Automated Grid 5x5 - AI Lab")
             self.window = pygame.display.set_mode((self.window_size, self.window_size))
             self.clock = pygame.time.Clock()
+            self._init_sprites()
             
         # Procesar cola de eventos de Pygame para mantener la ventana interactiva y responsiva
         for event in pygame.event.get():
@@ -322,39 +332,24 @@ class WarehouseEnv(gym.Env):
         self.window.blit(txt_p, (pickup_rect.centerx - txt_p.get_width() // 2, pickup_rect.centery - txt_p.get_height() // 2))
         self.window.blit(txt_d, (dropoff_rect.centerx - txt_d.get_width() // 2, dropoff_rect.centery - txt_d.get_height() // 2))
 
-        # 4. Dibujar el Obstáculo (Círculo rojo/naranja con un indicador visual)
-        obs_center = (
-            self.obstacle_pos[0] * self.cell_size + self.cell_size // 2,
-            self.obstacle_pos[1] * self.cell_size + self.cell_size // 2
-        )
-        pygame.draw.circle(self.window, color_obstacle, obs_center, int(self.cell_size * 0.4))
-        # Dibujar núcleo del obstáculo
-        pygame.draw.circle(self.window, (30, 30, 30), obs_center, int(self.cell_size * 0.15))
+        # 4. Dibujar el Obstáculo (Fantasma pixel-art)
+        obs_center_x = self.obstacle_pos[0] * self.cell_size + self.cell_size // 2
+        obs_center_y = self.obstacle_pos[1] * self.cell_size + self.cell_size // 2
+        ghost_rect = self.ghost_sprite.get_rect(center=(obs_center_x, obs_center_y))
+        self.window.blit(self.ghost_sprite, ghost_rect)
 
-        # 5. Dibujar al Robot (Esfera amarilla brillante con animaciones o detalles)
-        robot_center = (
-            self.robot_pos[0] * self.cell_size + self.cell_size // 2,
-            self.robot_pos[1] * self.cell_size + self.cell_size // 2
-        )
-        pygame.draw.circle(self.window, color_robot, robot_center, int(self.cell_size * 0.35))
+        # 5. Dibujar al Robot (Pac-Man pixel-art rotado en la dirección de su movimiento)
+        robot_center_x = self.robot_pos[0] * self.cell_size + self.cell_size // 2
+        robot_center_y = self.robot_pos[1] * self.cell_size + self.cell_size // 2
         
-        # Si lleva el paquete, dibujamos el paquete encima (un cuadrado morado con borde)
+        rotated_pacman = pygame.transform.rotate(self.pacman_sprite, self.robot_dir)
+        pacman_rect = rotated_pacman.get_rect(center=(robot_center_x, robot_center_y))
+        self.window.blit(rotated_pacman, pacman_rect)
+        
+        # Si lleva el paquete, dibujamos la cereza encima
         if self.carrying == 1:
-            pkg_size = int(self.cell_size * 0.3)
-            pkg_rect = pygame.Rect(
-                robot_center[0] - pkg_size // 2,
-                robot_center[1] - pkg_size // 2,
-                pkg_size,
-                pkg_size
-            )
-            pygame.draw.rect(self.window, color_package, pkg_rect)
-            pygame.draw.rect(self.window, (255, 255, 255), pkg_rect, 2)
-            
-            # Etiqueta del paquete
-            txt_box = font.render("PKG", True, (255, 255, 255))
-            # Ajustar escala para que quepa en el paquete
-            txt_box_scaled = pygame.transform.scale(txt_box, (int(pkg_size * 0.8), int(pkg_size * 0.6)))
-            self.window.blit(txt_box_scaled, (pkg_rect.centerx - txt_box_scaled.get_width() // 2, pkg_rect.centery - txt_box_scaled.get_height() // 2))
+            cherry_rect = self.cherry_sprite.get_rect(center=(robot_center_x + int(self.cell_size * 0.2), robot_center_y - int(self.cell_size * 0.2)))
+            self.window.blit(self.cherry_sprite, cherry_rect)
 
         # Actualizar display
         pygame.event.pump()
@@ -370,3 +365,103 @@ class WarehouseEnv(gym.Env):
             pygame.quit()
             self.window = None
             self.clock = None
+
+    def _init_sprites(self):
+        """Genera superficies en memoria con pixel art retro para Pac-Man, el Fantasma y las Cerezas."""
+        # Paleta de colores para los sprites
+        # Usamos (0, 0, 0) como color transparente y llamamos a set_colorkey((0,0,0))
+        palette = {
+            ".": (0, 0, 0),        # Transparente
+            "Y": (255, 238, 0),    # Amarillo Pac-Man
+            "K": (0, 0, 0),        # Negro Ojos
+            "P": (255, 150, 180),  # Rosa tierno para el rubor (blush)
+            "R": (255, 0, 0),      # Rojo Fantasma (Blinky)
+            "W": (255, 255, 255),  # Blanco
+            "B": (33, 150, 243),   # Azul
+            "G": (76, 175, 80),    # Verde Cereza
+            "C": (217, 4, 41),     # Rojo Cereza
+        }
+        
+        # Patrón de Pac-Man (16x16) mirando a la derecha
+        # Tiene una forma más redonda, un ojito tierno de 2x2 y rubor rosa en la mejilla
+        pacman_pattern = [
+            ".....YYYYYY.....",
+            "...YYYYYYYYYY...",
+            "..YYYYYYYYYYYY..",
+            ".YYYYYKKYYYYYYY.",
+            ".YYYYYKKPYYYYYY.",
+            "YYYYYYYPPYYY....",
+            "YYYYYYYYYY......",
+            "YYYYYYYY........",
+            "YYYYYYYYYY......",
+            "YYYYYYYYYYYY....",
+            ".YYYYYYYYYYYYY..",
+            ".YYYYYYYYYYYYY..",
+            "..YYYYYYYYYYYY..",
+            "...YYYYYYYYYY...",
+            ".....YYYYYY.....",
+            "................"
+        ]
+        
+        # Patrón de Fantasma (16x16)
+        # Ojos redondos grandes y separados para un look mucho más tierno
+        ghost_pattern = [
+            ".....RRRRRR.....",
+            "...RRRRRRRRRR...",
+            "..RRRRRRRRRRRR..",
+            ".RRRRRRRRRRRRRR.",
+            ".RRWWWRRRRWWWRR.",
+            "RWWWWWRRWWWWWRR",
+            "RWWBBWRRWWBBWRR",
+            "RWWBBWRRWWBBWRR",
+            ".RRWWWRRRRWWWRR.",
+            ".RRRRRRRRRRRRRR.",
+            "RRRRRRRRRRRRRRRR",
+            "RRRRRRRRRRRRRRRR",
+            "RRRRRRRRRRRRRRRR",
+            "RR.RRR..RRR.RR.R",
+            "R...R....R...R..",
+            "................"
+        ]
+        
+        # Patrón de Cereza (16x16)
+        cherry_pattern = [
+            "........GG......",
+            ".......G........",
+            "......G.........",
+            "...GGGGGGGG.....",
+            "..G...G....G....",
+            ".G....G.....G...",
+            ".G.....G....G...",
+            "....CC....CC....",
+            "...CCCC..CCCC...",
+            "..CCWCCCCCWCCC..",
+            "..CCWCCCCCWCCC..",
+            "..CCCCCCCCCCCC..",
+            "...CCCC..CCCC...",
+            "....CC....CC....",
+            "................",
+            "................"
+        ]
+        
+        # Función interna para convertir patrón de caracteres en pygame.Surface
+        def make_surface(pattern):
+            surf = pygame.Surface((16, 16))
+            surf.fill((0, 0, 0)) # Fondo negro para usar de colorkey
+            surf.set_colorkey((0, 0, 0))
+            for y, row in enumerate(pattern):
+                for x, char in enumerate(row):
+                    color = palette.get(char, (0, 0, 0))
+                    if char != ".":
+                        surf.set_at((x, y), color)
+            return surf
+
+        # Crear y escalar los sprites
+        sprite_size = int(self.cell_size * 0.75)
+        raw_pacman = make_surface(pacman_pattern)
+        raw_ghost = make_surface(ghost_pattern)
+        raw_cherry = make_surface(cherry_pattern)
+        
+        self.pacman_sprite = pygame.transform.scale(raw_pacman, (sprite_size, sprite_size))
+        self.ghost_sprite = pygame.transform.scale(raw_ghost, (sprite_size, sprite_size))
+        self.cherry_sprite = pygame.transform.scale(raw_cherry, (int(sprite_size * 0.8), int(sprite_size * 0.8)))
